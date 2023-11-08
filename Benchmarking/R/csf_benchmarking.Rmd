@@ -1,0 +1,379 @@
+---
+title: "IVSparse Benchmarking"
+output: html_document
+date: "2023-04-11"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# This was not used in the paper, but has some R code to generate plots for an older version of the preprint. Plots on the paper used the provided python code.
+
+
+```{R}
+setwd("~/vscode/IVSparse-Matrix/Benchmarking")
+library(ggplot2)
+#setwd("") # YOU WILL NEED TO CHANGE THIS, JUST COMMENT IT OUT AND PASTE YOUR OWN PATH TO timeDataFinal.csv
+
+#data <- read.csv("timeDataFinal.csv") # or whatever you saved it as
+#rawData <- read.csv("rawTimeDataFinal.csv")
+sizeData <- read.csv("sizeData.csv")
+#move annoying offset from reading in matrix number as rownames
+#colnames(data) <- c(colnames(data)[-1], "")
+# delete useless column
+#data <- data[,-ncol(data)]
+# Create a new column with grouped intervals
+# Create a new column with grouped intervals, excluding NA values
+library(plotly)
+library(akima)
+
+sizeData$Ratio <- sizeData$IVSparse2.Size / sizeData$IVSparse1.Size
+sizeData$InverseRedundancy <- sqrt(1 / sizeData$Redundancy)
+sizeData$InverseSparsity <- ifelse(sizeData$Sparsity == 0, 1, sqrt(1 / sizeData$Sparsity))
+gridSize <- 100
+xGrid <- seq(min(sizeData$InverseRedundancy), max(sizeData$InverseRedundancy), length.out = gridSize)
+yGrid <- seq(min(sizeData$InverseSparsity), max(sizeData$InverseSparsity), length.out = gridSize)
+gridData <- data.frame(InverseRedundancy = rep(xGrid, gridSize),
+                       InverseSparsity = rep(yGrid, each = gridSize))
+
+# Create the interpolated surface
+# Interpolate the ratio values
+interpResult <- interp(sizeData$InverseRedundancy, sizeData$InverseSparsity, sizeData$Ratio,
+                       xo = xGrid, yo = yGrid, duplicate = "mean")
+
+# Extract interpolated values
+interpValues <- interpResult$z
+
+# Create a plotly surface plot using interpolated values
+surfacePlot <- plot_ly(x = interpResult$x, y = interpResult$y, z = interpValues,
+                       type = "surface", colorscale = "Viridis")
+
+realSizeData <- read.csv("realSizeData.csv")
+realSizeData$Ratio <- realSizeData$IVSparse2.Size / realSizeData$IVSparse1.Size
+
+# Add markers from another dataset
+surfacePlot <- surfacePlot %>%
+  add_markers(data = realSizeData, x = ~sqrt(Redundancy), y = ~sqrt(Sparsity), z = ~Ratio)
+
+# Add text labels to the markers
+surfacePlot <- surfacePlot %>%
+  
+  add_text(data = realSizeData, x = ~Redundancy, y = ~Sparsity, z = ~Ratio,
+           text = ~Matrix.Number, textposition = "middle center", textfont = list(size = 8))
+
+# Configure the layout for the 3D plot
+surfacePlot <- surfacePlot %>%
+  layout(scene = list(xaxis = list(title = "Redundancy"),
+                      yaxis = list(title = "Sparsity"),
+                      zaxis = list(title = "IVSparse2.Size / IVSparse1.Size")))
+
+# Display the updated 3D plot with surface, markers, and labels
+surfacePlot
+
+```
+
+```{R}
+
+# Filter out matrices with Matrix.Nonzeros < 10000
+filteredData <- rawData[rawData$Matrix.Nonzeros >= 1, ]
+
+# Create a new column with grouped intervals, including 0 in the first group
+filteredData$Redundancy_Group <- cut(filteredData$Matrix.Redundancy, breaks = c(0, seq(0.1, max(filteredData$Matrix.Redundancy), by = 0.1)), include.lowest = TRUE, na.rm = TRUE)
+
+# Plotting the box plots
+ggplot(filteredData, aes(x = Redundancy_Group, y = IVSparse2.Matrix.Multiplication.Time / Eigen.Matrix.Multiplication.Time)) +
+  geom_boxplot() +
+  stat_summary(fun = "median", geom = "line", aes(group = 1), color = "blue") +
+  geom_jitter(width = 0.1, size = 0.5, color = "#a0a0a0") +
+  labs(x = "Redundancy Group", y = "IVSparse2.InnerIterator.Time") +
+  ggtitle("Box Plots of IVSparse2.InnerIterator.Time by Redundancy Group")
+
+
+# Calculate the ratio of Matrix.Nonzeros to Matrix.Cols
+rawData$Nonzeros_Per_Col <- rawData$Matrix.Nonzeros / rawData$Matrix.Cols
+
+# Create a new column with grouped intervals
+rawData$Group <- cut(rawData$Nonzeros_Per_Col, breaks = seq(0, max(rawData$Nonzeros_Per_Col) + 5, by = 5), include.lowest = TRUE)
+
+# Plotting the box plots
+ggplot(rawData, aes(x = Group, y = IVSparse2.InnerIterator.Time / Eigen.InnerIterator.Time)) +
+  stat_summary(fun.y = max, geom = "line", aes(group = 1)) +
+  geom_jitter(width = 0.1, size = 0.5, color = "#a0a0a0") +
+  labs(x = "Nonzeros per Column", y = "Time per nonzero (ns) Ratio ") +
+  ggtitle("Max IVSparse2 to Eigen InnerIterator Time Grouped by Nonzeros per Col")
+
+
+
+# Calculate the ratio of Matrix.Nonzeros to Matrix.Cols
+data$Nonzeros_Per_Col <- data$Matrix.Nonzeros / data$Matrix.Cols
+
+# Create a new column with grouped intervals
+data$memory.ratio <- data$Avg.IVSparse3.Memory.Usage / data$Avg.Eigen.Memory.Usage
+data$Group <- cut(data$memory.ratio, breaks = seq(0, max(data$memory.ratio) + 0.1, by = 0.1), include.lowest = TRUE)
+data$ratio <- data$Avg.IVSparse3.Matrix.Multiplication.Time / data$Avg.Eigen.Matrix.Multiplication.Time
+
+# Plotting the box plots
+ggplot(data, aes(x = Group, y = data$ratio)) +
+  stat_summary(fun.y = max, geom = "line", aes(group = 1)) +
+  geom_jitter(width = 0.1, size = 0.5, color = "#a0a0a0") +
+  labs(x = "Memory Usage Ratio", y = "Time (ns) Ratio ") +
+  ggtitle("Max IVSparse3 to Eigen SpMV (Averaged) Time Grouped by Memory Ratio")
+
+
+
+```
+
+## Memory usage
+
+
+```{R}
+plot_data <- data.frame("ID" = data$Matrix.Number,
+                        "redundancy" = data$Matrix.Redundancy,
+                        "rows" = data$Matrix.Rows,
+                        "cols" = data$Matrix.Cols,
+                        "nonzeros" = data$Matrix.Nonzeros,
+                        "IVSparse1_ratio" = data$Avg.IVSparse1.Memory.Usage / data$Avg.Eigen.Memory.Usage, 
+                        "IVSparse2_ratio" = data$Avg.IVSparse2.Memory.Usage / data$Avg.Eigen.Memory.Usage, 
+                        "IVSparse3_ratio" = data$Avg.IVSparse3.Memory.Usage / data$Avg.Eigen.Memory.Usage)
+```
+
+We need to show how IVSparse compresses matrices as a function of redundancy compared to Eigen.
+```{R}
+
+
+#IVSparse 2
+plot_data <- data.frame("redundancy" = data$Matrix.Redundancy, 
+                        "IVSparse2" = data$Avg.IVSparse2.Memory.Usage / data$Avg.Eigen.Memory.Usage) 
+
+plot_data <- reshape2::melt(plot_data, id.vars = "redundancy")
+
+colnames(plot_data) <- c("redundancy", "format", "compression_ratio")
+
+ggplot(plot_data, aes(redundancy, compression_ratio)) + 
+  geom_point() + theme_classic() + theme(aspect.ratio = 1) + 
+  labs(x = "Average Column redundancy", y = "Compression Ratio vs. CSC Format", color = "Matrix Format") + 
+  geom_abline(intercept = 1, slope=0) + 
+  scale_y_continuous(expand = c(0, 0), limits = c(0, 4))
+
+
+ggsave("IVSparse2_Memory.png", width = 5, height = 5, units = "in", dpi = 400)
+
+# IVSparse 3
+plot_data <- data.frame("redundancy" = data$Matrix.Redundancy, 
+                        "IVSparse3" = data$Avg.IVSparse3.Memory.Usage / data$Avg.Eigen.Memory.Usage)
+
+plot_data <- reshape2::melt(plot_data, id.vars = "redundancy")
+
+colnames(plot_data) <- c("redundancy", "format", "compression_ratio")
+
+library(ggplot2)
+ggplot(plot_data, aes(redundancy, compression_ratio)) + 
+  geom_point() + 
+  theme_classic() + 
+  theme(aspect.ratio = 1) + 
+  labs(x = "Average Column redundancy", y = "Compression Ratio vs. CSC Format", color = "Matrix Format") + 
+  geom_abline(intercept = 1, slope=0) + 
+  scale_y_continuous(expand = c(0, 0), limits = c(0, 4))
+
+ggsave("IVSparse3_Memory.png", width = 5, height = 5, units = "in", dpi = 400)
+
+```
+
+That's not as expected.
+
+So let's look at the size of a IVSparse2 matrix vs. the size of an Eigen matrix as a function of redundancy:
+
+```{R}
+plot_data <- data.frame("Eigen" = data$Avg.Eigen.Memory.Usage, "IVSparse2" = data$Avg.IVSparse2.Memory.Usage, "redundancy" = data$Matrix.Redundancy)
+
+ggplot(plot_data, aes(Eigen, IVSparse2, color = redundancy)) + geom_point() + theme_classic() + theme(aspect.ratio = 1) + labs(x = "Size of Eigen matrix", y = "Size of IVSparse2 matrix", color = "Matrix redundancy") + scale_color_viridis_c(option = "B", end = 0.8) + scale_y_continuous(trans = "log10") + scale_x_continuous(trans = "log10") + geom_abline(slope = 1)
+
+ggsave("IVSparse2_Matrix_Size_VS_Eigen.png", width = 5, height = 5, units = "in", dpi = 400)
+
+```
+
+Does the same apply for IVSparse3?
+
+```{R}
+plot_data <- data.frame("Eigen" = data$Avg.Eigen.Memory.Usage, "IVSparse3" = data$Avg.IVSparse3.Memory.Usage, "redundancy" = data$Matrix.Redundancy)
+
+ggplot(plot_data, aes(Eigen, IVSparse3, color = redundancy)) + geom_point() + theme_classic() + theme(aspect.ratio = 1) + labs(x = "Size of Eigen matrix", y = "Size of IVSparse3 matrix", color = "Matrix redundancy") + scale_color_viridis_c(option = "B", end = 0.8) + scale_y_continuous(trans = "log10") + scale_x_continuous(trans = "log10") + geom_abline(slope = 1)
+
+ggsave("IVSparse3_Matrix_Size_VS_Eigen.png", width = 5, height = 5, units = "in", dpi = 400)
+
+```
+
+Still not as expected.
+
+## Runtime of Iterator
+
+Here we want a plot of the iterator runtime of Eigen vs. IVSparse2 vs. IVSparse3 for redundant (>90% redundant) and non-redundant matrices (<90% redundant)
+
+```{R}
+library(ggplot2)
+library(reshape2)
+
+df <- data.frame("IVSparse1" = data$Avg.IVSparse1.InnerIterator.Time / data$Avg.Eigen.InnerIterator.Time,
+                 "IVSparse2" = data$Avg.IVSparse2.InnerIterator.Time / data$Avg.Eigen.InnerIterator.Time,
+                 "IVSparse3" = data$Avg.IVSparse3.InnerIterator.Time / data$Avg.Eigen.InnerIterator.Time,
+                 "Armadillo" = data$Avg.Armadillo.InnerIterator.Time / data$Avg.Eigen.InnerIterator.Time)
+df <- reshape2::melt(df)
+colnames(df) <- c("format", "time")
+
+# Create the box plots using ggplot
+ggplot(df, aes(format, time)) +
+  geom_jitter(width = 0.1, size = 0.5, color = "#a0a0a0") +
+  geom_boxplot(outlier.size = 0) +
+  geom_hline(yintercept = 1, linetype = "dashed", color = "blue") +
+  labs(x = "format", y = "Iterator speed vs. Eigen CSC Iterator") +
+  theme_classic() +
+  scale_y_continuous(expand = c(0, 0), limits = c(0, 10)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) 
+
+ggsave("IVSparse2_Iter_Speed_VS_Eigen.png", width = 5, height = 5, units = "in", dpi = 400)
+
+
+#df <- reshape2::melt(df, id.vars = c("nnzpercol" = data$Matrix.Nonzeros / data$Matrix.Cols))
+#colnames(df) <- c("nnzpercol", "format", "time")
+#df$time <- df$time / df$nnzpercol
+
+#ggplot(df, aes(format, time)) +
+#  geom_boxplot() +
+#  theme_classic() +
+#  scale_y_continuous(trans = "log10")
+
+
+```
+
+## Scalar multiplication time
+
+```{R}
+df <- data.frame("IVSparse1" =  data$Avg.IVSparse1.Scalar.Multiplication.Time / data$Avg.Eigen.Scalar.Multiplication.Time, 
+                 "IVSparse2" = data$Avg.IVSparse2.Scalar.Multiplication.Time / data$Avg.Eigen.Scalar.Multiplication.Time, 
+                 "IVSparse3" = data$Avg.IVSparse3.Scalar.Multiplication.Time / data$Avg.Eigen.Scalar.Multiplication.Time,
+                 "lapack" = data$Avg.Armadillo.Scalar.Multiplication.Time / data$Avg.Eigen.Scalar.Multiplication.Time)
+
+df <- reshape2::melt(df)
+
+colnames(df) <- c("format", "time")
+ggplot(df, aes(format, time)) +  
+  theme_classic() + 
+  scale_y_continuous(expand = c(0, 0), trans = "log10") + 
+  geom_jitter(width = 0.1, size = 0.5, color = "#a0a0a0") + 
+  geom_boxplot(outlier.size = 0) + 
+  geom_hline(yintercept = 1, linetype = "dashed", color = "blue") + 
+  labs(x = "format", y = "Scalar multiplication time vs. Eigen") + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) + 
+  scale_y_continuous(limits = c(0, 10))
+
+
+
+ggsave("IVSparse2_ScalarMult_Speed_VS_Eigen.png", width = 5, height = 5, units = "in", dpi = 400)
+```
+
+
+```{R}
+# This is to create a data frame to look at data for yourself
+df <- data.frame("ID" = data$Matrix.Number,
+                 "redundancy" = data$Matrix.Redundancy,
+                 "rows" = data$Matrix.Rows,
+                 "cols" = data$Matrix.Cols,
+                 "IVSparse1" =  data$Avg.IVSparse1.Vector.Multiplication.Time / data$Avg.Eigen.Vector.Multiplication.Time, 
+                 "IVSparse2" = data$Avg.IVSparse2.Vector.Multiplication.Time / data$Avg.Eigen.Vector.Multiplication.Time, 
+                 "IVSparse3" = data$Avg.IVSparse3.Vector.Multiplication.Time / data$Avg.Eigen.Vector.Multiplication.Time,
+                 "lapack" = data$Avg.Armadillo.Vector.Multiplication.Time / data$Avg.Eigen.Vector.Multiplication.Time)
+```
+
+
+```{R}
+df <- data.frame("IVSparse2" =  data$Avg.IVSparse1.Vector.Multiplication.Time / data$Avg.Eigen.Vector.Multiplication.Time, 
+                 "IVSparse2" = data$Avg.IVSparse2.Vector.Multiplication.Time / data$Avg.Eigen.Vector.Multiplication.Time, 
+                 "IVSparse3" = data$Avg.IVSparse3.Vector.Multiplication.Time / data$Avg.Eigen.Vector.Multiplication.Time,
+                 "lapack" = data$Avg.Armadillo.Scalar.Multiplication.Time / data$Avg.Eigen.Vector.Multiplication.Time)
+
+df <- reshape2::melt(df)
+colnames(df) <- c("format", "time")
+ggplot(df, aes(format, time)) + 
+  theme_classic() + 
+  scale_y_continuous(expand = c(0, 0), limits = c(0, 5)) + 
+  geom_jitter(width = 0.1, size = 0.5, color = "#a0a0a0") + 
+  geom_boxplot(outlier.size = 0) + 
+  geom_hline(yintercept = 1, linetype = "dashed", color = "blue") + 
+  labs(x = "format", y = "Vector multiplication time vs. Eigen") + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggsave("IVSparse2_VectorMult_Speed_VS_Eigen.png", width = 5, height = 5, units = "in", dpi = 400)
+```
+
+
+
+```{R}
+# This is to create a data frame to look at data for yourself
+df <- data.frame("ID" = data$Matrix.Number,
+                 "redundancy" = data$Matrix.Redundancy,
+                 "rows" = data$Matrix.Rows,
+                 "cols" = data$Matrix.Cols,
+                 "IVSparse1" =  data$Avg.IVSparse1.Matrix.Multiplication.Time / data$Avg.Eigen.Matrix.Multiplication.Time, 
+                 "IVSparse2" = data$Avg.IVSparse2.Matrix.Multiplication.Time / data$Avg.Eigen.Matrix.Multiplication.Time, 
+                 "IVSparse3" = data$Avg.IVSparse3.Matrix.Multiplication.Time / data$Avg.Eigen.Matrix.Multiplication.Time,
+                 "lapack" = data$Avg.Armadillo.Matrix.Multiplication.Time / data$Avg.Eigen.Matrix.Multiplication.Time)
+```
+
+
+```{R}
+df <- data.frame("IVSparse1" =  data$Avg.IVSparse1.Matrix.Multiplication.Time / data$Avg.Eigen.Matrix.Multiplication.Time, 
+                 "IVSparse2" = data$Avg.IVSparse2.Matrix.Multiplication.Time / data$Avg.Eigen.Matrix.Multiplication.Time, 
+                 "IVSparse3" = data$Avg.IVSparse3.Matrix.Multiplication.Time / data$Avg.Eigen.Matrix.Multiplication.Time,
+                 "lapack" = data$Avg.Armadillo.Matrix.Multiplication.Time / data$Avg.Eigen.Matrix.Multiplication.Time)
+
+df <- reshape2::melt(df)
+colnames(df) <- c("format", "time")
+ggplot(df, aes(format, time)) +  
+  theme_classic() + 
+  scale_y_continuous(expand = c(0, 0), limits = c(0, 5)) + 
+  geom_jitter(width = 0.1, size = 0.5, color = "#a0a0a0") + 
+  geom_boxplot(outlier.size = 0) + geom_hline(yintercept = 1, linetype = "dashed", color = "blue") + 
+  labs(x = "format", y = "Matrix multiplication time vs. Eigen") + theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggsave("IVSparse2_MatrixMult_Speed_VS_Eigen.png", width = 5, height = 5, units = "in", dpi = 400)
+```
+
+
+```{R}
+df <- data.frame("IVSparse1" = data$Avg.IVSparse1.Constructor.Time, 
+                 "IVSparse2" = data$Avg.IVSparse2.Constructor.Time, 
+                 "IVSparse3" = data$Avg.IVSparse3.Constructor.Time,
+                  "Eigen" = data$Avg.Eigen.Constructor.Time,
+                  "nonzeros" = data$Matrix.Nonzeros)
+
+library(ggplot2)
+
+ggplot(df, aes(Eigen / 1e9, IVSparse2 / 1e9, color = nonzeros)) +
+  geom_point() +
+  scale_y_continuous(trans = "log10", expand = c(0, 0), limits = c(1e-6, 1)) +
+  scale_x_continuous(trans = "log10", expand = c(0, 0), limits = c(1e-6, 1)) +
+  theme_classic() +
+  coord_equal() +
+  scale_color_viridis_c(option = "B", end = 0.9, trans = "log10") +
+  labs(x = "Eigen (sec)", y = "IVSparse2 (sec)", title = "Time to construct matrix") +
+  geom_abline(slope = 1, linetype = "dashed", color = "blue") +
+  theme(plot.title = element_text(hjust = 0.5),
+        aspect.ratio = 1)
+
+ggsave("Eigen_VS_IVSparse2_Constructor.png", width = 5, height = 5, units = "in", dpi = 400)
+
+ggplot(df, aes(Eigen / 1e9, IVSparse3 / 1e9, color = nonzeros)) +
+  geom_point() +
+  scale_y_continuous(trans = "log10", expand = c(0, 0), limits = c(1e-6, 1)) +
+  scale_x_continuous(trans = "log10", expand = c(0, 0), limits = c(1e-6, 1)) +
+  theme_classic() +
+  coord_equal() +
+  scale_color_viridis_c(option = "B", end = 0.9, trans = "log10") +
+  labs(x = "Eigen (sec)", y = "IVSparse3 (sec)", title = "Time to construct matrix") +
+  geom_abline(slope = 1, linetype = "dashed", color = "blue") +
+  theme(plot.title = element_text(hjust = 0.5),
+        aspect.ratio = 1)
+
+ggsave("Eigen_VS_IVSparse3_Constructor.png", width = 5, height = 5, units = "in", dpi = 400)
+```
